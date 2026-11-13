@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "四片 · X 图片切分",
   "version": "1.1.0",
-  "description": "拖入横图，按从左到右四等分，预览后加入 X 发帖附件。",
+  "description": "将横图从左到右切成 1 至 20 份，默认 4 份，预览后加入 X 发帖附件。",
   "permissions": ["clipboardRead"],
   "content_scripts": [{
     "matches": ["https://x.com/*", "https://www.x.com/*", "https://twitter.com/*", "https://www.twitter.com/*"],

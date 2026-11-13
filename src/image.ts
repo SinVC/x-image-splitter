@@ -1,7 +1,13 @@
 export type OutputFormat = "auto" | "png" | "jpeg";
 export type SliceResult = { files: File[]; width: number; height: number; widths: number[] };
 
-export async function splitImage(file: File, format: OutputFormat = "auto"): Promise<SliceResult> {
+export const DEFAULT_SLICE_COUNT = 4;
+export const MAX_SLICE_COUNT = 20;
+
+export async function splitImage(file: File, format: OutputFormat = "auto", count = DEFAULT_SLICE_COUNT): Promise<SliceResult> {
+  if (!Number.isInteger(count) || count < 1 || count > MAX_SLICE_COUNT) {
+    throw new Error(`请输入 1 到 ${MAX_SLICE_COUNT} 之间的整数。`);
+  }
   if (!file.size || file.size > 50 * 1024 * 1024) throw new Error("请选择不超过 50 MB 的静态图片。");
   const header = new Uint8Array(await file.slice(0, 32).arrayBuffer());
   const ascii = (start: number, end: number) => String.fromCharCode(...header.slice(start, end));
@@ -17,7 +23,7 @@ export async function splitImage(file: File, format: OutputFormat = "auto"): Pro
   catch { throw new Error("无法读取图片，请检查文件是否完整。"); }
   try {
     const { width, height } = bitmap;
-    if (width < 4) throw new Error("图片宽度至少需要 4 像素。");
+    if (width < count) throw new Error(`图片宽度至少需要 ${count} 像素。`);
     if (width * height > 80_000_000) throw new Error("图片超过 8000 万像素，请先缩小原图。");
     // X 版只输出通用的 JPEG / PNG，WebP 默认转 PNG，保留透明像素。
     const type = format === "jpeg" || (format === "auto" && jpeg) ? "image/jpeg" : "image/png";
@@ -25,9 +31,9 @@ export async function splitImage(file: File, format: OutputFormat = "auto"): Pro
     const stem = (file.name.replace(/\.[^.]+$/, "").replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").slice(0, 100) || "image");
     const files: File[] = [];
     const widths: number[] = [];
-    for (let i = 0; i < 4; i++) {
-      const left = Math.floor(width * i / 4);
-      const sliceWidth = Math.floor(width * (i + 1) / 4) - left;
+    for (let i = 0; i < count; i++) {
+      const left = Math.floor(width * i / count);
+      const sliceWidth = Math.floor(width * (i + 1) / count) - left;
       const canvas = document.createElement("canvas");
       canvas.width = sliceWidth; canvas.height = height;
       const context = canvas.getContext("2d");

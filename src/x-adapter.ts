@@ -1,4 +1,5 @@
 export type Composer = { editor: HTMLElement; scope: HTMLElement; input: HTMLInputElement };
+export const MAX_POST_ATTACHMENTS = 4;
 const editorsSelector = '[contenteditable="true"][role="textbox"], [contenteditable="true"][data-testid^="tweetTextarea"]';
 const fileSelector = 'input[type="file"]';
 const visible = (element: Element) => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== "hidden";
@@ -33,11 +34,11 @@ export function attachmentCount(scope: HTMLElement): number {
 export function addToComposer(composer: Composer, files: File[]): void {
   const { input, scope } = composer;
   if (!input.isConnected || !scope.isConnected) throw new Error("发帖窗口已变化，请重新选择输入框。");
-  if (files.length !== 4) throw new Error("X 版需要四张切图。");
+  if (files.length < 1 || files.length > MAX_POST_ATTACHMENTS) throw new Error(`X 每篇帖子最多添加 ${MAX_POST_ATTACHMENTS} 张切图。`);
   if (input.disabled) throw new Error("X 当前无法添加图片，请先检查发帖窗口。");
-  if (!input.multiple) throw new Error("这个上传控件不支持多图，请打开普通发帖窗口。");
+  if (!input.multiple && files.length > 1) throw new Error("这个上传控件不支持多图，请打开普通发帖窗口。");
   if (input.files?.length || attachmentCount(scope) || scope.querySelector('[data-testid="attachments"], video, [data-testid="videoPlayer"]')) {
-    throw new Error("当前帖子已有媒体附件。四张切图需要空的附件区，请先移除原附件或新建帖子。");
+    throw new Error("当前帖子已有媒体附件。请打开附件区为空的帖子。");
   }
   const transfer = new DataTransfer();
   files.forEach(file => transfer.items.add(file));
@@ -45,11 +46,11 @@ export function addToComposer(composer: Composer, files: File[]): void {
   input.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-export function waitForAttachments(composer: Composer, timeout = 15000): Promise<boolean> {
+export function waitForAttachments(composer: Composer, expected: number, timeout = 15000): Promise<boolean> {
   return new Promise(resolve => {
     let timer: ReturnType<typeof setTimeout>;
     const finish = (value: boolean) => { clearTimeout(timer); observer.disconnect(); resolve(value); };
-    const check = () => { if (attachmentCount(composer.scope) >= 4) finish(true); };
+    const check = () => { if (attachmentCount(composer.scope) >= expected) finish(true); };
     const observer = new MutationObserver(check);
     observer.observe(composer.scope, { childList: true, subtree: true, attributes: true });
     timer = setTimeout(() => finish(false), timeout);

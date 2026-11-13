@@ -1,5 +1,5 @@
-import { splitImage, type OutputFormat, type SliceResult } from "./image";
-import { findComposer, addToComposer, waitForAttachments } from "./x-adapter";
+import { DEFAULT_SLICE_COUNT, MAX_SLICE_COUNT, splitImage, type OutputFormat, type SliceResult } from "./image";
+import { MAX_POST_ATTACHMENTS, findComposer, addToComposer, waitForAttachments } from "./x-adapter";
 import { readClipboardImage } from "./clipboard";
 
 const HOST_ID = "x-four-slices";
@@ -13,8 +13,8 @@ function mount() {
   root.innerHTML = `
   <style>
   :host{all:initial;font-family:system-ui,'Microsoft YaHei',sans-serif;color:#f3f5f7;font-size:14px}
-  *{box-sizing:border-box}button,select{font:inherit}button{cursor:pointer}button:disabled{cursor:default;opacity:.45}
-  button:focus-visible,select:focus-visible{outline:2px solid #78d9b3;outline-offset:3px}
+  *{box-sizing:border-box}button,select,input{font:inherit}button{cursor:pointer}button:disabled{cursor:default;opacity:.45}
+  button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid #78d9b3;outline-offset:3px}
   .orb{display:flex;align-items:center;gap:8px;padding:13px 17px;border:1px solid #505b63;border-radius:30px;background:#182127;color:#eaf4ef;box-shadow:0 5px 22px #0006;touch-action:none}
   .bars{display:flex;gap:3px;height:20px}.bars i{width:4px;border-radius:2px;background:#8ce5bc}
   .panel{display:none;width:min(370px,calc(100vw - 24px));max-height:calc(100vh - 32px);overflow:auto;border:1px solid #3a454d;border-radius:20px;background:#151d23;box-shadow:0 15px 60px #0009}
@@ -27,7 +27,8 @@ function mount() {
   .clipboard{display:block;width:100%;margin-top:10px;padding:11px 12px;border:1px solid #537c6b;border-radius:9px;background:#233d32;color:#baf3d8;font-weight:600}
   .clipboard:hover:not(:disabled){background:#2d4d3f}
   .row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:17px 0 14px;color:#b8c7d1;font-size:12px}
-  select{background:#26343c;color:#e4ecef;border:1px solid #42535e;border-radius:6px;padding:5px}
+  select,.count{background:#26343c;color:#e4ecef;border:1px solid #42535e;border-radius:6px;padding:5px}
+  .count{width:58px}
   .preview{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;margin-top:15px}
   figure{margin:0;min-width:0}figure img{width:100%;height:150px;object-fit:contain;display:block;border-radius:5px;background:repeating-conic-gradient(#27343c 0 25%,#1c272e 0 50%) 0/14px 14px}
   figcaption{font-size:11px;text-align:center;padding-top:6px;color:#a7bbc7}
@@ -38,17 +39,17 @@ function mount() {
   .link{border:0;background:none;color:#a9c1ce;font-size:11px;padding:2px}
   </style>
   <div class="widget">
-    <button class="orb" aria-label="打开四片切图面板" title="拖入横图，切成四张"><span class="bars"><i></i><i></i><i></i><i></i></span>四片</button>
+    <button class="orb" aria-label="打开四片切图面板" title="拖入横图，按份数切图"><span class="bars"><i></i><i></i><i></i><i></i></span>四片</button>
     <section class="panel" aria-label="四片切图面板">
       <header><div><strong>四片</strong><small>FOR X</small></div><button class="icon" aria-label="收起面板">−</button></header>
       <div class="body">
         <button class="drop"><strong>把横图拖到这里</strong><span>或点击选择 · 面板内支持 Ctrl+V<br>JPG / PNG / WebP</span></button>
         <input class="picker" type="file" accept="image/jpeg,image/png,image/webp" hidden>
         <button class="clipboard" title="先在网页图片上右键 Copy image，再点击此按钮">读取剪贴板并切图</button>
-        <div class="row"><span>从左到右 · 四等分</span><label>输出 <select aria-label="输出格式"><option value="auto">自动</option><option value="jpeg">JPG</option><option value="png">PNG</option></select></label></div>
+        <div class="row"><label>份数 <input class="count" type="number" min="1" max="${MAX_SLICE_COUNT}" step="1" value="${DEFAULT_SLICE_COUNT}"></label><label>输出 <select aria-label="输出格式"><option value="auto">自动</option><option value="jpeg">JPG</option><option value="png">PNG</option></select></label></div>
         <div class="preview" aria-label="切图预览"></div><div class="info"></div>
         <div class="status" role="status" aria-live="polite">打开 X 发帖窗口，再选择一张图片。</div>
-        <button class="primary" disabled>加入当前帖子 · 4 张</button>
+        <button class="primary" disabled>加入当前帖子 · ${DEFAULT_SLICE_COUNT} 张</button>
         <div class="footer"><span>切图不下载到本地</span><button class="link">清空图片</button></div>
       </div>
     </section>
@@ -57,15 +58,27 @@ function mount() {
   const get = <T extends HTMLElement>(selector: string) => root.querySelector<T>(selector)!;
   const widget = get(".widget"), orb = get<HTMLButtonElement>(".orb");
   const picker = get<HTMLInputElement>(".picker"), format = get<HTMLSelectElement>("select");
+  const count = get<HTMLInputElement>(".count");
   const add = get<HTMLButtonElement>(".primary"), drop = get<HTMLButtonElement>(".drop");
   const clipboardButton = get<HTMLButtonElement>(".clipboard");
   const preview = get(".preview"), info = get(".info"), status = get(".status");
   let source: File | null = null, result: SliceResult | null = null, urls: string[] = [];
-  let generation = 0, sent = false, uploading = false, preferred: HTMLElement | null = null;
+  let generation = 0, handedOff = 0, uploading = false, preferred: HTMLElement | null = null;
   let readingClipboard = false;
   const say = (text: string, type = "") => { status.textContent = text; status.className = `status ${type}`; };
   const open = () => { widget.classList.add("open"); clamp(); };
-  const clearPreview = () => { urls.forEach(URL.revokeObjectURL); urls = []; preview.replaceChildren(); info.textContent = ""; result = null; add.disabled = true; };
+  const nextBatch = () => result?.files.slice(handedOff, handedOff + MAX_POST_ATTACHMENTS) ?? [];
+  const updateAddButton = () => {
+    const batch = nextBatch();
+    add.disabled = !batch.length || uploading || readingClipboard || count.valueAsNumber !== result?.files.length;
+    if (result && result.files.length > MAX_POST_ATTACHMENTS && batch.length) {
+      add.textContent = `加入当前帖子 · 第 ${handedOff + 1}–${handedOff + batch.length} 张`;
+    } else {
+      const size = Math.min(count.valueAsNumber, MAX_POST_ATTACHMENTS);
+      add.textContent = count.value && count.validity.valid ? `加入当前帖子 · ${size} 张` : "加入当前帖子";
+    }
+  };
+  const clearPreview = () => { urls.forEach(URL.revokeObjectURL); urls = []; preview.replaceChildren(); info.textContent = ""; result = null; updateAddButton(); };
   const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
   document.addEventListener("focusin", event => {
     if (event.target instanceof HTMLElement && event.target.matches('[contenteditable="true"][role="textbox"], [contenteditable="true"][data-testid^="tweetTextarea"]')) preferred = event.target;
@@ -73,10 +86,10 @@ function mount() {
   async function prepare(file: File) {
     if (uploading) return;
     const ticket = ++generation;
-    source = file; sent = false; clearPreview(); open();
+    source = file; handedOff = 0; clearPreview(); open();
     say("正在切图…");
     try {
-      const next = await splitImage(file, format.value as OutputFormat);
+      const next = await splitImage(file, format.value as OutputFormat, count.valueAsNumber);
       if (ticket !== generation) return;
       result = next;
       next.files.forEach((part, index) => {
@@ -85,12 +98,16 @@ function mount() {
         caption.textContent = `${String(index + 1).padStart(2, "0")} · ${next.widths[index]} px`;
         figure.title = part.name; figure.append(img, caption); preview.append(figure);
       });
-      info.textContent = `${file.name} · ${next.width} × ${next.height} → 4 张 · 共 ${(next.files.reduce((sum, part) => sum + part.size, 0) / 1024 / 1024).toFixed(2)} MB`;
-      say("预览已就绪。点击下方按钮，加入 X 附件区。"); add.disabled = readingClipboard; clamp();
+      info.textContent = `${file.name} · ${next.width} × ${next.height} → ${next.files.length} 张 · 共 ${(next.files.reduce((sum, part) => sum + part.size, 0) / 1024 / 1024).toFixed(2)} MB`;
+      say(next.files.length > MAX_POST_ATTACHMENTS
+        ? "预览已就绪。X 每帖最多 4 张，请为每批使用一个空的发帖框。"
+        : "预览已就绪。点击下方按钮，加入 X 附件区。");
+      updateAddButton();
+      clamp();
     } catch (error) { if (ticket === generation) say(errorText(error), "error"); }
   }
   function receive(files: File[]) {
-    if (files.length !== 1) { open(); say("请一次放入一张原图，工具会自动切成四张。", "error"); return; }
+    if (files.length !== 1) { open(); say("请一次放入一张原图。", "error"); return; }
     void prepare(files[0]);
   }
   orb.addEventListener("click", () => { if (!moved) open(); });
@@ -100,7 +117,7 @@ function mount() {
     // 内容脚本拥有 clipboardRead 权限，必须由真实用户点击触发。
     if (!event.isTrusted || uploading || readingClipboard) return;
     const ticket = ++generation;
-    readingClipboard = true; clipboardButton.disabled = true; add.disabled = true;
+    readingClipboard = true; clipboardButton.disabled = true; count.disabled = true; updateAddButton();
     clipboardButton.textContent = "正在读取剪贴板…";
     say("正在读取剪贴板图片…");
     try {
@@ -111,15 +128,22 @@ function mount() {
       if (ticket === generation) say(errorText(error), "error");
     } finally {
       readingClipboard = false; clipboardButton.disabled = uploading;
+      count.disabled = uploading;
       clipboardButton.textContent = "读取剪贴板并切图";
-      add.disabled = !result || sent || uploading;
+      updateAddButton();
     }
   });
   picker.addEventListener("change", () => { if (picker.files?.length) receive(Array.from(picker.files)); picker.value = ""; });
   format.addEventListener("change", () => { if (source) void prepare(source); });
+  count.addEventListener("input", updateAddButton);
+  count.addEventListener("change", () => {
+    if (source) void prepare(source);
+    else if (!count.value || !count.validity.valid) say(`请输入 1 到 ${MAX_SLICE_COUNT} 之间的整数。`, "error");
+    else say("打开 X 发帖窗口，再选择一张图片。");
+  });
   get(".link").addEventListener("click", () => {
     if (uploading) return;
-    generation++; source = null; sent = false; clearPreview(); say("图片已清空，可以继续拖入下一张。");
+    generation++; source = null; handedOff = 0; clearPreview(); say("图片已清空，可以继续拖入下一张。");
   });
   // 在 window 捕获阶段截住落在面板上的文件，避免 X 先收到未切分的原图。
   for (const type of ["dragenter", "dragover", "drop"] as const) {
@@ -145,16 +169,28 @@ function mount() {
   });
   root.addEventListener("keydown", event => event.stopPropagation());
   add.addEventListener("click", async () => {
-    if (!result || sent || uploading || readingClipboard) return;
+    if (add.disabled || !result) return;
+    const batch = nextBatch();
     let composer;
-    try { composer = findComposer(preferred); addToComposer(composer, result.files); }
+    try { composer = findComposer(preferred); addToComposer(composer, batch); }
     catch (error) { say(errorText(error), "error"); return; }
-    sent = true; uploading = true; add.disabled = true; format.disabled = true; drop.disabled = true; clipboardButton.disabled = true;
-    say("已交给 X，正在等待四张附件预览…");
+    uploading = true; add.disabled = true; count.disabled = true; format.disabled = true; drop.disabled = true; clipboardButton.disabled = true;
+    say(`已交给 X，正在等待 ${batch.length} 张附件预览…`);
     try {
-      const confirmed = await waitForAttachments(composer);
-      say(confirmed ? "X 已显示四张切图。请检查排列，再自行发布。" : "已交给 X，但暂未确认四张预览。请检查 X 的附件区及报错，避免重复添加。", confirmed ? "ok" : "error");
-    } finally { uploading = false; format.disabled = false; drop.disabled = false; clipboardButton.disabled = false; }
+      const confirmed = await waitForAttachments(composer, batch.length);
+      if (confirmed) {
+        handedOff += batch.length;
+        const remaining = result.files.length - handedOff;
+        say(remaining
+          ? `X 已显示 ${batch.length} 张切图。还剩 ${remaining} 张，请用新的空发帖框添加下一批。`
+          : `X 已显示 ${batch.length} 张切图。请检查排列，再自行发布。`, "ok");
+      } else {
+        say(`已交给 X，但暂未确认 ${batch.length} 张预览。请检查 X 的附件区及报错，再决定是否重试。`, "error");
+      }
+    } finally {
+      uploading = false; count.disabled = false; format.disabled = false; drop.disabled = false; clipboardButton.disabled = false;
+      updateAddButton();
+    }
   });
   let moved = false;
   function clamp() {
