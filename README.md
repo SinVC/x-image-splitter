@@ -28,7 +28,7 @@ Chrome may ask for clipboard access. The extension reads the clipboard only when
 3. Enter the slice count in **份数** and check the preview. Click **加入当前帖子** (Add to current post).
 4. Check the attachments in X before posting.
 
-The attachment area must be empty. X accepts up to four images per post. For more than four slices, open a new empty composer and click **加入当前帖子** for each remaining batch. Clipboard images usually do not include the original filename, so their slices use a timestamped name.
+The attachment area must be empty. **加入当前帖子** adds all slices to the same post in order. Clipboard images usually do not include the original filename, so their slices use a timestamped name.
 
 ## Development
 

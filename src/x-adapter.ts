@@ -1,5 +1,4 @@
 export type Composer = { editor: HTMLElement; scope: HTMLElement; input: HTMLInputElement };
-export const MAX_POST_ATTACHMENTS = 4;
 const editorsSelector = '[contenteditable="true"][role="textbox"], [contenteditable="true"][data-testid^="tweetTextarea"]';
 const fileSelector = 'input[type="file"]';
 const visible = (element: Element) => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== "hidden";
@@ -34,7 +33,7 @@ export function attachmentCount(scope: HTMLElement): number {
 export function addToComposer(composer: Composer, files: File[]): void {
   const { input, scope } = composer;
   if (!input.isConnected || !scope.isConnected) throw new Error("发帖窗口已变化，请重新选择输入框。");
-  if (files.length < 1 || files.length > MAX_POST_ATTACHMENTS) throw new Error(`X 每篇帖子最多添加 ${MAX_POST_ATTACHMENTS} 张切图。`);
+  if (!files.length) throw new Error("请先生成切图。");
   if (input.disabled) throw new Error("X 当前无法添加图片，请先检查发帖窗口。");
   if (!input.multiple && files.length > 1) throw new Error("这个上传控件不支持多图，请打开普通发帖窗口。");
   if (input.files?.length || attachmentCount(scope) || scope.querySelector('[data-testid="attachments"], video, [data-testid="videoPlayer"]')) {

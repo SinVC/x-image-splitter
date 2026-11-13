@@ -1,5 +1,5 @@
 import { DEFAULT_SLICE_COUNT, MAX_SLICE_COUNT, splitImage, type OutputFormat, type SliceResult } from "./image";
-import { MAX_POST_ATTACHMENTS, findComposer, addToComposer, waitForAttachments } from "./x-adapter";
+import { findComposer, addToComposer, waitForAttachments } from "./x-adapter";
 import { readClipboardImage } from "./clipboard";
 
 const HOST_ID = "x-four-slices";
@@ -63,22 +63,16 @@ function mount() {
   const clipboardButton = get<HTMLButtonElement>(".clipboard");
   const preview = get(".preview"), info = get(".info"), status = get(".status");
   let source: File | null = null, result: SliceResult | null = null, urls: string[] = [];
-  let generation = 0, handedOff = 0, uploading = false, preferred: HTMLElement | null = null;
+  let generation = 0, sent = false, uploading = false, preferred: HTMLElement | null = null;
   let readingClipboard = false;
   const say = (text: string, type = "") => { status.textContent = text; status.className = `status ${type}`; };
   const open = () => { widget.classList.add("open"); clamp(); };
-  const nextBatch = () => result?.files.slice(handedOff, handedOff + MAX_POST_ATTACHMENTS) ?? [];
   const updateAddButton = () => {
-    const batch = nextBatch();
-    add.disabled = !batch.length || uploading || readingClipboard || count.valueAsNumber !== result?.files.length;
-    if (result && result.files.length > MAX_POST_ATTACHMENTS && batch.length) {
-      add.textContent = `加入当前帖子 · 第 ${handedOff + 1}–${handedOff + batch.length} 张`;
-    } else {
-      const size = Math.min(count.valueAsNumber, MAX_POST_ATTACHMENTS);
-      add.textContent = count.value && count.validity.valid ? `加入当前帖子 · ${size} 张` : "加入当前帖子";
-    }
+    const size = count.valueAsNumber;
+    add.disabled = !result || sent || uploading || readingClipboard || size !== result.files.length;
+    add.textContent = count.value && count.validity.valid ? `加入当前帖子 · ${size} 张` : "加入当前帖子";
   };
-  const clearPreview = () => { urls.forEach(URL.revokeObjectURL); urls = []; preview.replaceChildren(); info.textContent = ""; result = null; updateAddButton(); };
+  const clearPreview = () => { urls.forEach(URL.revokeObjectURL); urls = []; preview.replaceChildren(); info.textContent = ""; result = null; sent = false; updateAddButton(); };
   const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
   document.addEventListener("focusin", event => {
     if (event.target instanceof HTMLElement && event.target.matches('[contenteditable="true"][role="textbox"], [contenteditable="true"][data-testid^="tweetTextarea"]')) preferred = event.target;
@@ -86,7 +80,7 @@ function mount() {
   async function prepare(file: File) {
     if (uploading) return;
     const ticket = ++generation;
-    source = file; handedOff = 0; clearPreview(); open();
+    source = file; clearPreview(); open();
     say("正在切图…");
     try {
       const next = await splitImage(file, format.value as OutputFormat, count.valueAsNumber);
@@ -99,9 +93,7 @@ function mount() {
         figure.title = part.name; figure.append(img, caption); preview.append(figure);
       });
       info.textContent = `${file.name} · ${next.width} × ${next.height} → ${next.files.length} 张 · 共 ${(next.files.reduce((sum, part) => sum + part.size, 0) / 1024 / 1024).toFixed(2)} MB`;
-      say(next.files.length > MAX_POST_ATTACHMENTS
-        ? "预览已就绪。X 每帖最多 4 张，请为每批使用一个空的发帖框。"
-        : "预览已就绪。点击下方按钮，加入 X 附件区。");
+      say("预览已就绪。点击下方按钮，将所有切图加入 X 附件区。");
       updateAddButton();
       clamp();
     } catch (error) { if (ticket === generation) say(errorText(error), "error"); }
@@ -143,7 +135,7 @@ function mount() {
   });
   get(".link").addEventListener("click", () => {
     if (uploading) return;
-    generation++; source = null; handedOff = 0; clearPreview(); say("图片已清空，可以继续拖入下一张。");
+    generation++; source = null; clearPreview(); say("图片已清空，可以继续拖入下一张。");
   });
   // 在 window 捕获阶段截住落在面板上的文件，避免 X 先收到未切分的原图。
   for (const type of ["dragenter", "dragover", "drop"] as const) {
@@ -170,23 +162,18 @@ function mount() {
   root.addEventListener("keydown", event => event.stopPropagation());
   add.addEventListener("click", async () => {
     if (add.disabled || !result) return;
-    const batch = nextBatch();
+    const { files } = result;
     let composer;
-    try { composer = findComposer(preferred); addToComposer(composer, batch); }
+    try { composer = findComposer(preferred); addToComposer(composer, files); }
     catch (error) { say(errorText(error), "error"); return; }
     uploading = true; add.disabled = true; count.disabled = true; format.disabled = true; drop.disabled = true; clipboardButton.disabled = true;
-    say(`已交给 X，正在等待 ${batch.length} 张附件预览…`);
+    say(`已交给 X，正在等待 ${files.length} 张附件预览…`);
     try {
-      const confirmed = await waitForAttachments(composer, batch.length);
-      if (confirmed) {
-        handedOff += batch.length;
-        const remaining = result.files.length - handedOff;
-        say(remaining
-          ? `X 已显示 ${batch.length} 张切图。还剩 ${remaining} 张，请用新的空发帖框添加下一批。`
-          : `X 已显示 ${batch.length} 张切图。请检查排列，再自行发布。`, "ok");
-      } else {
-        say(`已交给 X，但暂未确认 ${batch.length} 张预览。请检查 X 的附件区及报错，再决定是否重试。`, "error");
-      }
+      sent = await waitForAttachments(composer, files.length);
+      say(sent
+        ? `X 已显示 ${files.length} 张切图。请检查排列，再自行发布。`
+        : `已交给 X，但暂未确认 ${files.length} 张预览。请检查 X 的附件区及报错，再决定是否重试。`,
+        sent ? "ok" : "error");
     } finally {
       uploading = false; count.disabled = false; format.disabled = false; drop.disabled = false; clipboardButton.disabled = false;
       updateAddButton();

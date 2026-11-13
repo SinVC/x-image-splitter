@@ -73,11 +73,16 @@ document.querySelector<HTMLButtonElement>("#run")!.onclick = async () => {
     const modal = fixture("modal", true);
     const composer = findComposer();
     assert(modal.contains(composer.input), "未选中弹窗编辑框");
+    const { files } = await splitImage(original, "auto", 20);
     let received: File[] = [];
-    composer.input.addEventListener("change", () => { received = Array.from(composer.input.files ?? []); });
-    addToComposer(composer, parts.files);
-    assert(received.length === 4 && received.every((file, i) => file.name === parts.files[i].name), "上传顺序错误");
-    pass("弹窗优先选择，四个内存文件按顺序送入 change 事件");
+    let changes = 0;
+    composer.input.addEventListener("change", () => {
+      changes++;
+      received = Array.from(composer.input.files ?? []);
+    });
+    addToComposer(composer, files);
+    assert(changes === 1 && received.length === 20 && received.every((file, i) => file.name === files[i].name), "20 张切图应按顺序一次交给发帖框");
+    pass("弹窗优先选择，20 张切图按顺序通过一次 change 事件送入");
     rejected = false;
     try { addToComposer(composer, parts.files); } catch { rejected = true; }
     assert(rejected, "没有阻止已有附件的帖子"); pass("已有附件时阻止重复添加");
